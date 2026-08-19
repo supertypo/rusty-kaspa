@@ -71,6 +71,7 @@ impl Router {
                 GetUtxosByAddresses,
                 GetVirtualChainFromBlock,
                 GetVirtualChainFromBlockV2,
+                GetMempoolEntriesByAddressesV2,
                 GetSeqCommitLaneProof,
                 ResolveFinalityConflict,
                 Shutdown,

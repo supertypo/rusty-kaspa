@@ -144,6 +144,8 @@ pub enum RpcApiOps {
     GetBlockRewardInfo = 152,
     /// Get Seq-Commit Lane Proof
     GetSeqCommitLaneProof = 153,
+    /// Get a list of mempool entries that belong to a specific address V2
+    GetMempoolEntriesByAddressesV2 = 154,
 }
 
 impl RpcApiOps {

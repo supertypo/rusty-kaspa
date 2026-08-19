@@ -1159,6 +1159,49 @@ try_from! ( args: GetMempoolEntriesByAddressesResponse, IGetMempoolEntriesByAddr
 // ---
 
 declare! {
+    IGetMempoolEntriesByAddressesV2Request,
+    r#"
+    /**
+     *
+     *
+     * @category Node RPC
+     */
+    export interface IGetMempoolEntriesByAddressesV2Request {
+        addresses : Address[] | string[];
+        /** Whether or not to include the orphan pool (transactions which inputs are not known at this time) */
+        includeOrphanPool: boolean;
+        /** Whether or not to filter out the transaction pool */
+        filterTransactionPool: boolean;
+        dataVerbosityLevel?: DataVerbosityLevel;
+    }
+    "#,
+}
+
+try_from! ( args: IGetMempoolEntriesByAddressesV2Request, GetMempoolEntriesByAddressesV2Request, {
+    Ok(from_value(args.into())?)
+});
+
+declare! {
+    IGetMempoolEntriesByAddressesV2Response,
+    r#"
+    /**
+     *
+     *
+     * @category Node RPC
+     */
+    export interface IGetMempoolEntriesByAddressesV2Response {
+        entries : IMempoolEntryByAddressV2[];
+    }
+    "#,
+}
+
+try_from! ( args: GetMempoolEntriesByAddressesV2Response, IGetMempoolEntriesByAddressesV2Response, {
+    Ok(to_value(&args)?.into())
+});
+
+// ---
+
+declare! {
     IGetMempoolEntryRequest,
     r#"
     /**

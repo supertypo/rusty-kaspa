@@ -394,6 +394,14 @@ impl RpcApi for RpcCoreMock {
         Err(RpcError::NotImplemented)
     }
 
+    async fn get_mempool_entries_by_addresses_v2_call(
+        &self,
+        _connection: Option<&DynRpcConnection>,
+        _request: GetMempoolEntriesByAddressesV2Request,
+    ) -> RpcResult<GetMempoolEntriesByAddressesV2Response> {
+        Err(RpcError::NotImplemented)
+    }
+
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // Notification API
 

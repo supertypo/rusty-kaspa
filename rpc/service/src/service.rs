@@ -648,6 +648,31 @@ NOTE: This error usually indicates an RPC conversion error between the node and 
         Ok(GetMempoolEntriesByAddressesResponse::new(mempool_entries))
     }
 
+    async fn get_mempool_entries_by_addresses_v2_call(
+        &self,
+        _connection: Option<&DynRpcConnection>,
+        request: GetMempoolEntriesByAddressesV2Request,
+    ) -> RpcResult<GetMempoolEntriesByAddressesV2Response> {
+        let query = self.extract_tx_query(request.filter_transaction_pool, request.include_orphan_pool)?;
+        // sets to full by default
+        let data_verbosity_level = request.data_verbosity_level.unwrap_or(RpcDataVerbosityLevel::Full);
+        let verbosity = RpcTransactionVerbosity::from(data_verbosity_level);
+        let session = self.consensus_manager.consensus().unguarded_session();
+        let script_public_keys = request.addresses.iter().map(pay_to_address_script).collect();
+        let grouped_txs = self.mining_manager.clone().get_transactions_by_addresses(script_public_keys, query).await;
+        let mut mempool_entries = Vec::with_capacity(grouped_txs.owners.len());
+        for (script_public_key, owner_transactions) in grouped_txs.owners.iter() {
+            let address = extract_script_pub_key_address(script_public_key, self.config.prefix())
+                .expect("script public key is convertible into an address");
+            mempool_entries.push(
+                self.consensus_converter
+                    .get_mempool_entries_by_address_v2(&session, address, owner_transactions, &grouped_txs.transactions, &verbosity)
+                    .await?,
+            );
+        }
+        Ok(GetMempoolEntriesByAddressesV2Response::new(mempool_entries))
+    }
+
     async fn submit_transaction_call(
         &self,
         _connection: Option<&DynRpcConnection>,

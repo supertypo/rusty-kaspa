@@ -23,11 +23,11 @@ use kaspa_notify::converter::Converter;
 use kaspa_rpc_core::{
     BlockAddedNotification, Notification, RpcAcceptanceDataVerbosity, RpcAcceptedTransactionIds, RpcBlock, RpcBlockVerboseData,
     RpcChainBlockAcceptedTransactions, RpcError, RpcHash, RpcHeaderVerbosity, RpcMempoolEntry, RpcMempoolEntryByAddress,
-    RpcMergesetBlockAcceptanceDataVerbosity, RpcOptionalHeader, RpcOptionalTransaction, RpcOptionalTransactionInput,
-    RpcOptionalTransactionInputVerboseData, RpcOptionalTransactionOutput, RpcOptionalTransactionOutputVerboseData,
-    RpcOptionalTransactionVerboseData, RpcOptionalUtxoEntry, RpcOptionalUtxoEntryVerboseData, RpcResult, RpcTransaction,
-    RpcTransactionInput, RpcTransactionInputVerboseDataVerbosity, RpcTransactionInputVerbosity, RpcTransactionOutput,
-    RpcTransactionOutputVerboseData, RpcTransactionOutputVerboseDataVerbosity, RpcTransactionOutputVerbosity,
+    RpcMempoolEntryByAddressV2, RpcMempoolEntryV2, RpcMergesetBlockAcceptanceDataVerbosity, RpcOptionalHeader, RpcOptionalTransaction,
+    RpcOptionalTransactionInput, RpcOptionalTransactionInputVerboseData, RpcOptionalTransactionOutput,
+    RpcOptionalTransactionOutputVerboseData, RpcOptionalTransactionVerboseData, RpcOptionalUtxoEntry, RpcOptionalUtxoEntryVerboseData,
+    RpcResult, RpcTransaction, RpcTransactionInput, RpcTransactionInputVerboseDataVerbosity, RpcTransactionInputVerbosity,
+    RpcTransactionOutput, RpcTransactionOutputVerboseData, RpcTransactionOutputVerboseDataVerbosity, RpcTransactionOutputVerbosity,
     RpcTransactionVerboseData, RpcTransactionVerboseDataVerbosity, RpcTransactionVerbosity, RpcUtxoEntryVerboseDataVerbosity,
     RpcUtxoEntryVerbosity,
 };
@@ -124,6 +124,44 @@ impl ConsensusConverter {
         transactions: &HashMap<TransactionId, MutableTransaction>,
     ) -> Vec<RpcMempoolEntry> {
         transaction_ids.iter().map(|x| self.get_mempool_entry(consensus, transactions.get(x).expect("transaction exists"))).collect()
+    }
+
+    pub async fn get_mempool_entry_v2(
+        &self,
+        consensus: &ConsensusProxy,
+        transaction: &MutableTransaction,
+        verbosity: &RpcTransactionVerbosity,
+    ) -> RpcResult<RpcMempoolEntryV2> {
+        let is_orphan = !transaction.is_fully_populated();
+        let rpc_transaction = self.convert_mempool_transaction_with_verbosity(consensus, transaction, verbosity).await?;
+        Ok(RpcMempoolEntryV2::new(transaction.calculated_fee.unwrap_or_default(), rpc_transaction, is_orphan))
+    }
+
+    pub async fn get_mempool_entries_by_address_v2(
+        &self,
+        consensus: &ConsensusProxy,
+        address: Address,
+        owner_transactions: &OwnerTransactions,
+        transactions: &HashMap<TransactionId, MutableTransaction>,
+        verbosity: &RpcTransactionVerbosity,
+    ) -> RpcResult<RpcMempoolEntryByAddressV2> {
+        let sending = self.get_owner_entries_v2(consensus, &owner_transactions.sending_txs, transactions, verbosity).await?;
+        let receiving = self.get_owner_entries_v2(consensus, &owner_transactions.receiving_txs, transactions, verbosity).await?;
+        Ok(RpcMempoolEntryByAddressV2::new(address, sending, receiving))
+    }
+
+    pub async fn get_owner_entries_v2(
+        &self,
+        consensus: &ConsensusProxy,
+        transaction_ids: &TransactionIdSet,
+        transactions: &HashMap<TransactionId, MutableTransaction>,
+        verbosity: &RpcTransactionVerbosity,
+    ) -> RpcResult<Vec<RpcMempoolEntryV2>> {
+        let mut entries = Vec::with_capacity(transaction_ids.len());
+        for id in transaction_ids.iter() {
+            entries.push(self.get_mempool_entry_v2(consensus, transactions.get(id).expect("transaction exists"), verbosity).await?);
+        }
+        Ok(entries)
     }
 
     /// Converts a consensus [`Transaction`] into an [`RpcTransaction`], optionally including verbose data.
@@ -522,6 +560,100 @@ impl ConsensusConverter {
                         verbose_data_verbosity,
                     )?,
                 )
+            } else {
+                Default::default()
+            },
+        })
+    }
+
+    /// Converts a mempool [`MutableTransaction`] into an [`RpcOptionalTransaction`] honoring the requested verbosity.
+    ///
+    /// Unlike accepted-transaction conversion, mempool transactions have no accepting block, so the
+    /// `block_hash` and `block_time` verbose fields are always omitted. Inputs of orphan transactions
+    /// have unresolved UTXO entries; their `utxo_entry` verbose field is omitted rather than failing.
+    pub async fn convert_mempool_transaction_with_verbosity(
+        &self,
+        consensus: &ConsensusProxy,
+        transaction: &MutableTransaction,
+        verbosity: &RpcTransactionVerbosity,
+    ) -> RpcResult<RpcOptionalTransaction> {
+        Ok(RpcOptionalTransaction {
+            version: if verbosity.include_version.unwrap_or(false) { Some(transaction.tx.version) } else { Default::default() },
+            inputs: if let Some(input_verbosity) = verbosity.input_verbosity.as_ref() {
+                // Fallback verbosity for inputs with an unresolved UTXO entry (orphan transactions)
+                let unpopulated_input_verbosity =
+                    RpcTransactionInputVerbosity { verbose_data_verbosity: None, ..input_verbosity.clone() };
+                transaction
+                    .tx
+                    .inputs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, x)| match transaction.entries[i].clone() {
+                        Some(utxo) => self.get_transaction_input_with_verbosity(x, Some(utxo), input_verbosity),
+                        None => self.get_transaction_input_with_verbosity(x, None, &unpopulated_input_verbosity),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                Default::default()
+            },
+            outputs: if let Some(output_verbosity) = verbosity.output_verbosity.as_ref() {
+                transaction
+                    .tx
+                    .outputs
+                    .iter()
+                    .map(|x| self.convert_transaction_output_with_verbosity(x, output_verbosity))
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                Default::default()
+            },
+            lock_time: if verbosity.include_lock_time.unwrap_or(false) { Some(transaction.tx.lock_time) } else { Default::default() },
+            subnetwork_id: if verbosity.include_subnetwork_id.unwrap_or(false) {
+                Some(transaction.tx.subnetwork_id)
+            } else {
+                Default::default()
+            },
+            gas: if verbosity.include_gas.unwrap_or(false) { Some(transaction.tx.gas) } else { Default::default() },
+            payload: if verbosity.include_payload.unwrap_or(false) {
+                Some(transaction.tx.payload.clone())
+            } else {
+                Default::default()
+            },
+            storage_mass: if verbosity.include_storage_mass.unwrap_or(false) {
+                Some(transaction.tx.storage_mass())
+            } else {
+                Default::default()
+            },
+            verbose_data: if let Some(verbose_data_verbosity) = verbosity.verbose_data_verbosity.as_ref() {
+                Some(RpcOptionalTransactionVerboseData {
+                    transaction_id: if verbose_data_verbosity.include_transaction_id.unwrap_or(false) {
+                        Some(transaction.id())
+                    } else {
+                        Default::default()
+                    },
+                    hash: if verbose_data_verbosity.include_hash.unwrap_or(false) {
+                        Some(hash(&transaction.tx))
+                    } else {
+                        Default::default()
+                    },
+                    compute_mass: if verbose_data_verbosity.include_compute_mass.unwrap_or(false) {
+                        Some(
+                            transaction
+                                .calculated_non_contextual_masses
+                                .map(Ok)
+                                .unwrap_or_else(|| {
+                                    consensus.calculate_transaction_non_contextual_masses(transaction.tx.as_ref()).map_err(
+                                        |err: TxRuleError| RpcError::ConsensusError(ConsensusError::GeneralOwned(err.to_string())),
+                                    )
+                                })?
+                                .compute_mass,
+                        )
+                    } else {
+                        Default::default()
+                    },
+                    // Mempool transactions are not included in a block yet
+                    block_hash: Default::default(),
+                    block_time: Default::default(),
+                })
             } else {
                 Default::default()
             },

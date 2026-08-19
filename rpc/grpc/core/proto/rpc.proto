@@ -1162,3 +1162,32 @@ message GetSeqCommitLaneProofResponseMessage {
 
   RPCError error = 1000;
 }
+
+/// GetMempoolEntriesByAddressesV2RequestMessage requests mempool entries
+/// related to specific addresses, with configurable data verbosity
+message GetMempoolEntriesByAddressesV2RequestMessage {
+  repeated string addresses = 1;
+  bool includeOrphanPool = 2;
+  bool filterTransactionPool = 3;
+
+  optional RpcDataVerbosityLevel dataVerbosityLevel = 4;
+}
+
+message RpcMempoolEntryV2 {
+  uint64 fee = 1;
+  // Will be filled depending on the supplied RpcDataVerbosityLevel.
+  RpcOptionalTransaction transaction = 2;
+  bool isOrphan = 3;
+}
+
+message RpcMempoolEntryByAddressV2 {
+  string address = 1;
+  repeated RpcMempoolEntryV2 sending = 2;
+  repeated RpcMempoolEntryV2 receiving = 3;
+}
+
+message GetMempoolEntriesByAddressesV2ResponseMessage {
+  repeated RpcMempoolEntryByAddressV2 entries = 1;
+
+  RPCError error = 1000;
+}

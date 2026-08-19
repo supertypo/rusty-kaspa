@@ -1734,6 +1734,81 @@ impl Deserializer for GetMempoolEntriesByAddressesResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GetMempoolEntriesByAddressesV2Request {
+    pub addresses: Vec<RpcAddress>,
+    pub include_orphan_pool: bool,
+    // TODO: replace with `include_transaction_pool`
+    pub filter_transaction_pool: bool,
+    pub data_verbosity_level: Option<RpcDataVerbosityLevel>,
+}
+
+impl GetMempoolEntriesByAddressesV2Request {
+    pub fn new(
+        addresses: Vec<RpcAddress>,
+        include_orphan_pool: bool,
+        filter_transaction_pool: bool,
+        data_verbosity_level: Option<RpcDataVerbosityLevel>,
+    ) -> Self {
+        Self { addresses, include_orphan_pool, filter_transaction_pool, data_verbosity_level }
+    }
+}
+
+impl Serializer for GetMempoolEntriesByAddressesV2Request {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        store!(u16, &1, writer)?;
+        store!(Vec<RpcAddress>, &self.addresses, writer)?;
+        store!(bool, &self.include_orphan_pool, writer)?;
+        store!(bool, &self.filter_transaction_pool, writer)?;
+        serialize!(Option<RpcDataVerbosityLevel>, &self.data_verbosity_level, writer)?;
+
+        Ok(())
+    }
+}
+
+impl Deserializer for GetMempoolEntriesByAddressesV2Request {
+    fn deserialize<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let _version = load!(u16, reader)?;
+        let addresses = load!(Vec<RpcAddress>, reader)?;
+        let include_orphan_pool = load!(bool, reader)?;
+        let filter_transaction_pool = load!(bool, reader)?;
+        let data_verbosity_level = deserialize!(Option<RpcDataVerbosityLevel>, reader)?;
+
+        Ok(Self { addresses, include_orphan_pool, filter_transaction_pool, data_verbosity_level })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetMempoolEntriesByAddressesV2Response {
+    pub entries: Vec<RpcMempoolEntryByAddressV2>,
+}
+
+impl GetMempoolEntriesByAddressesV2Response {
+    pub fn new(entries: Vec<RpcMempoolEntryByAddressV2>) -> Self {
+        Self { entries }
+    }
+}
+
+impl Serializer for GetMempoolEntriesByAddressesV2Response {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        store!(u16, &1, writer)?;
+        serialize!(Vec<RpcMempoolEntryByAddressV2>, &self.entries, writer)?;
+
+        Ok(())
+    }
+}
+
+impl Deserializer for GetMempoolEntriesByAddressesV2Response {
+    fn deserialize<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let _version = load!(u16, reader)?;
+        let entries = deserialize!(Vec<RpcMempoolEntryByAddressV2>, reader)?;
+
+        Ok(Self { entries })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetCoinSupplyRequest {}
 
 impl Serializer for GetCoinSupplyRequest {

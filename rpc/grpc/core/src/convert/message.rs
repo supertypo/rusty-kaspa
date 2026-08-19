@@ -387,6 +387,20 @@ from!(
     { Self { entries: item.entries.iter().map(|x| x.into()).collect(), error: None } }
 );
 
+from!(item: &kaspa_rpc_core::GetMempoolEntriesByAddressesV2Request, protowire::GetMempoolEntriesByAddressesV2RequestMessage, {
+    Self {
+        addresses: item.addresses.iter().map(|x| x.into()).collect(),
+        include_orphan_pool: item.include_orphan_pool,
+        filter_transaction_pool: item.filter_transaction_pool,
+        data_verbosity_level: item.data_verbosity_level.map(|v| v as i32),
+    }
+});
+from!(
+    item: RpcResult<&kaspa_rpc_core::GetMempoolEntriesByAddressesV2Response>,
+    protowire::GetMempoolEntriesByAddressesV2ResponseMessage,
+    { Self { entries: item.entries.iter().map(|x| x.into()).collect(), error: None } }
+);
+
 from!(&kaspa_rpc_core::GetCoinSupplyRequest, protowire::GetCoinSupplyRequestMessage);
 from!(item: RpcResult<&kaspa_rpc_core::GetCoinSupplyResponse>, protowire::GetCoinSupplyResponseMessage, {
     Self { max_sompi: item.max_sompi, circulating_sompi: item.circulating_sompi, error: None }
@@ -937,6 +951,20 @@ try_from!(item: &protowire::GetMempoolEntriesByAddressesRequestMessage, kaspa_rp
 try_from!(
     item: &protowire::GetMempoolEntriesByAddressesResponseMessage,
     RpcResult<kaspa_rpc_core::GetMempoolEntriesByAddressesResponse>,
+    { Self { entries: item.entries.iter().map(|x| x.try_into()).collect::<Result<Vec<_>, _>>()? } }
+);
+
+try_from!(item: &protowire::GetMempoolEntriesByAddressesV2RequestMessage, kaspa_rpc_core::GetMempoolEntriesByAddressesV2Request, {
+    Self {
+        addresses: item.addresses.iter().map(|x| x.as_str().try_into()).collect::<Result<Vec<_>, _>>()?,
+        include_orphan_pool: item.include_orphan_pool,
+        filter_transaction_pool: item.filter_transaction_pool,
+        data_verbosity_level: item.data_verbosity_level.map(RpcDataVerbosityLevel::try_from).transpose()?,
+    }
+});
+try_from!(
+    item: &protowire::GetMempoolEntriesByAddressesV2ResponseMessage,
+    RpcResult<kaspa_rpc_core::GetMempoolEntriesByAddressesV2Response>,
     { Self { entries: item.entries.iter().map(|x| x.try_into()).collect::<Result<Vec<_>, _>>()? } }
 );
 

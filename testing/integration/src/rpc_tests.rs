@@ -518,6 +518,24 @@ async fn sanity_test() {
                 })
             }
 
+            KaspadPayloadOps::GetMempoolEntriesByAddressesV2 => {
+                let rpc_client = client.clone();
+                tst!(op, {
+                    let addresses = vec![Address::new(Prefix::Simnet, Version::PubKey, &[0u8; 32])];
+                    let response = rpc_client
+                        .get_mempool_entries_by_addresses_v2_call(
+                            None,
+                            GetMempoolEntriesByAddressesV2Request::new(addresses.clone(), true, false, None),
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(response.entries.len(), 1);
+                    assert_eq!(response.entries[0].address, addresses[0]);
+                    assert!(response.entries[0].receiving.is_empty());
+                    assert!(response.entries[0].sending.is_empty());
+                })
+            }
+
             KaspadPayloadOps::GetCoinSupply => {
                 let rpc_client = client.clone();
                 tst!(op, {

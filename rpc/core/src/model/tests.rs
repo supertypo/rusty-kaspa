@@ -1349,6 +1349,39 @@ mod mockery {
 
     test!(GetVirtualChainFromBlockV2Response);
 
+    impl Mock for GetMempoolEntriesByAddressesV2Request {
+        fn mock() -> Self {
+            GetMempoolEntriesByAddressesV2Request {
+                addresses: mock(),
+                include_orphan_pool: true,
+                filter_transaction_pool: false,
+                data_verbosity_level: None,
+            }
+        }
+    }
+
+    test!(GetMempoolEntriesByAddressesV2Request);
+
+    impl Mock for RpcMempoolEntryV2 {
+        fn mock() -> Self {
+            RpcMempoolEntryV2 { fee: mock(), transaction: mock(), is_orphan: mock() }
+        }
+    }
+
+    impl Mock for RpcMempoolEntryByAddressV2 {
+        fn mock() -> Self {
+            RpcMempoolEntryByAddressV2 { address: mock(), sending: mock(), receiving: mock() }
+        }
+    }
+
+    impl Mock for GetMempoolEntriesByAddressesV2Response {
+        fn mock() -> Self {
+            GetMempoolEntriesByAddressesV2Response { entries: mock() }
+        }
+    }
+
+    test!(GetMempoolEntriesByAddressesV2Response);
+
     impl Mock for NotifyBlockAddedRequest {
         fn mock() -> Self {
             NotifyBlockAddedRequest { command: Command::Start }

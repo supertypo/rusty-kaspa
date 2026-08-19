@@ -434,6 +434,33 @@ pub trait RpcApi: Sync + Send + AnySync {
     ) -> RpcResult<GetMempoolEntriesByAddressesResponse>;
 
     ///
+    async fn get_mempool_entries_by_addresses_v2(
+        &self,
+        addresses: Vec<RpcAddress>,
+        include_orphan_pool: bool,
+        filter_transaction_pool: bool,
+        data_verbosity_level: Option<RpcDataVerbosityLevel>,
+    ) -> RpcResult<Vec<RpcMempoolEntryByAddressV2>> {
+        Ok(self
+            .get_mempool_entries_by_addresses_v2_call(
+                None,
+                GetMempoolEntriesByAddressesV2Request::new(
+                    addresses,
+                    include_orphan_pool,
+                    filter_transaction_pool,
+                    data_verbosity_level,
+                ),
+            )
+            .await?
+            .entries)
+    }
+    async fn get_mempool_entries_by_addresses_v2_call(
+        &self,
+        connection: Option<&DynRpcConnection>,
+        request: GetMempoolEntriesByAddressesV2Request,
+    ) -> RpcResult<GetMempoolEntriesByAddressesV2Response>;
+
+    ///
     async fn get_coin_supply(&self) -> RpcResult<GetCoinSupplyResponse> {
         self.get_coin_supply_call(None, GetCoinSupplyRequest {}).await
     }

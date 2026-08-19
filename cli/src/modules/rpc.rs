@@ -235,6 +235,31 @@ impl Rpc {
                     .await?;
                 self.println(&ctx, result);
             }
+            RpcApiOps::GetMempoolEntriesByAddressesV2 => {
+                if argv.is_empty() {
+                    return Err(Error::custom("Please specify at least one address"));
+                }
+                let verbosity_level =
+                    argv.last().and_then(|arg| arg.parse::<i32>().ok()).map(RpcDataVerbosityLevel::try_from).transpose()?;
+                if verbosity_level.is_some() {
+                    argv.pop();
+                }
+                let addresses = argv.iter().map(|s| Address::try_from(s.as_str())).collect::<std::result::Result<Vec<_>, _>>()?;
+                let include_orphan_pool = true;
+                let filter_transaction_pool = true;
+                let result = rpc
+                    .get_mempool_entries_by_addresses_v2_call(
+                        None,
+                        GetMempoolEntriesByAddressesV2Request {
+                            addresses,
+                            include_orphan_pool,
+                            filter_transaction_pool,
+                            data_verbosity_level: verbosity_level,
+                        },
+                    )
+                    .await?;
+                self.println(&ctx, result);
+            }
             RpcApiOps::GetCoinSupply => {
                 let result = rpc.get_coin_supply_call(None, GetCoinSupplyRequest {}).await?;
                 self.println(&ctx, result);

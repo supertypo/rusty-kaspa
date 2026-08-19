@@ -1064,6 +1064,10 @@ build_wrpc_wasm_bindgen_interface!(
         /// Retrieves the virtual chain corresponding to a specified block hash.
         /// Returned information: Virtual chain information. (Version 2)
         /// May be used to get fully populated transactions
-        GetVirtualChainFromBlockV2
+        GetVirtualChainFromBlockV2,
+        /// Retrieves mempool entries associated with specific addresses. (Version 2)
+        /// Returned information: List of mempool entries with configurable
+        /// data verbosity, including populated input UTXO entries.
+        GetMempoolEntriesByAddressesV2
     ]
 );

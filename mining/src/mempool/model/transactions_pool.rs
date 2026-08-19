@@ -6,13 +6,18 @@ use crate::{
         errors::{RuleError, RuleResult},
         model::{
             map::MempoolTransactionCollection,
+            owner_index::MempoolOwnerIndex,
             pool::{Pool, TransactionsEdges},
             tx::{DoubleSpend, MempoolTransaction},
             utxo_set::MempoolUtxoSet,
         },
         tx::Priority,
     },
-    model::{TransactionIdSet, topological_index::TopologicalIndex},
+    model::{
+        TransactionIdSet,
+        owner_txs::{GroupedOwnerTransactions, ScriptPublicKeySet},
+        topological_index::TopologicalIndex,
+    },
 };
 use kaspa_consensus_core::{
     block::TemplateTransactionSelector,
@@ -78,6 +83,9 @@ pub(crate) struct TransactionsPool {
 
     /// Store of UTXOs
     utxo_set: MempoolUtxoSet,
+
+    /// Index of transactions by owning script public keys
+    owner_index: MempoolOwnerIndex,
 }
 
 impl TransactionsPool {
@@ -92,6 +100,7 @@ impl TransactionsPool {
             last_expire_scan_daa_score: 0,
             last_expire_scan_time: unix_now(),
             utxo_set: MempoolUtxoSet::new(),
+            owner_index: MempoolOwnerIndex::new(),
             estimated_size: 0,
         }
     }
@@ -133,6 +142,7 @@ impl TransactionsPool {
         }
 
         self.utxo_set.add_transaction(&transaction.mtx);
+        self.owner_index.add_transaction(&transaction.mtx);
         self.estimated_size += transaction_size;
         self.all_transactions.insert(id, transaction);
         trace!("Added transaction {}", id);
@@ -178,6 +188,7 @@ impl TransactionsPool {
 
         // Remove the transaction from the mempool UTXO set
         self.utxo_set.remove_transaction(&removed_tx.mtx, &parent_ids);
+        self.owner_index.remove_transaction(&removed_tx.mtx);
         self.estimated_size -= removed_tx.mtx.mempool_estimated_bytes();
 
         if self.all_transactions.is_empty() {
@@ -372,5 +383,142 @@ impl Pool for TransactionsPool {
     #[inline]
     fn chained(&self) -> &TransactionsEdges {
         &self.chained_transactions
+    }
+
+    /// Overrides the default full pool scan with lookups in the owner index.
+    fn fill_owner_set_transactions(&self, script_public_keys: &ScriptPublicKeySet, owner_set: &mut GroupedOwnerTransactions) {
+        for script_public_key in script_public_keys.iter() {
+            let owner = owner_set.owners.entry(script_public_key.clone()).or_default();
+            if let Some(owning) = self.owner_index.owning_transactions(script_public_key) {
+                for id in owning.sending_txs.iter().chain(owning.receiving_txs.iter()) {
+                    // Clone since the transaction leaves the mempool.
+                    owner_set.transactions.entry(*id).or_insert_with(|| self.all_transactions.get(id).unwrap().mtx.clone());
+                }
+                owner.sending_txs.extend(owning.sending_txs.iter());
+                owner.receiving_txs.extend(owning.receiving_txs.iter());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kaspa_consensus_core::{
+        config::constants::consensus::{DEFAULT_GAS_PER_LANE_LIMIT, DEFAULT_LANES_PER_BLOCK_LIMIT},
+        constants::{MAX_TX_IN_SEQUENCE_NUM, TX_VERSION},
+        mass::{BlockLaneLimits, BlockMassLimits, NonContextualMasses},
+        subnets::SUBNETWORK_ID_NATIVE,
+        tx::{ScriptPublicKey, Transaction, TransactionInput, TransactionOutput, UtxoEntry, scriptvec},
+    };
+    use kaspa_hashes::Hash;
+
+    fn create_pool() -> TransactionsPool {
+        let block_lane_limits =
+            BlockLaneLimits { lanes_per_block: DEFAULT_LANES_PER_BLOCK_LIMIT, gas_per_lane: DEFAULT_GAS_PER_LANE_LIMIT };
+        TransactionsPool::new(Arc::new(Config::build_default(
+            1_000,
+            false,
+            BlockMassLimits::with_shared_limit(500_000),
+            block_lane_limits,
+        )))
+    }
+
+    fn script(i: u8) -> ScriptPublicKey {
+        ScriptPublicKey::new(0, scriptvec![i; 32])
+    }
+
+    /// Creates a fully populated transaction spending one output owned by each sending script
+    /// and creating one output owned by each receiving script. The salt makes the id unique.
+    fn create_pooled_transaction(salt: u64, sending: &[u8], receiving: &[u8]) -> MutableTransaction {
+        let inputs = (0..sending.len())
+            .map(|i| {
+                TransactionInput::new(TransactionOutpoint::new(Hash::from_u64_word(salt), i as u32), vec![], MAX_TX_IN_SEQUENCE_NUM, 0)
+            })
+            .collect();
+        let outputs = receiving.iter().map(|&i| TransactionOutput::new(1000, script(i))).collect();
+        let mut transaction =
+            MutableTransaction::from_tx(Transaction::new(TX_VERSION, inputs, outputs, 0, SUBNETWORK_ID_NATIVE, 0, vec![]));
+        for (i, &sending_script) in sending.iter().enumerate() {
+            transaction.entries[i] = Some(UtxoEntry::new(1000, script(sending_script), 0, false, None));
+        }
+        transaction.calculated_fee = Some(1_000);
+        transaction.calculated_non_contextual_masses = Some(NonContextualMasses::new(100, 100));
+        transaction
+    }
+
+    fn add_transaction(pool: &mut TransactionsPool, transaction: MutableTransaction) {
+        let transaction_size = transaction.mempool_estimated_bytes();
+        pool.add_transaction(transaction, 0, Priority::Low, transaction_size).unwrap();
+    }
+
+    /// The full pool scan formerly performed by the default `fill_owner_set_transactions`,
+    /// serving as the oracle the owner index based version is compared against.
+    fn scan_owner_set_transactions(pool: &TransactionsPool, script_public_keys: &ScriptPublicKeySet) -> GroupedOwnerTransactions {
+        let mut owner_set = GroupedOwnerTransactions::default();
+        for script_public_key in script_public_keys.iter() {
+            let owner = owner_set.owners.entry(script_public_key.clone()).or_default();
+            for (id, transaction) in pool.all().iter() {
+                if transaction.mtx.entries.iter().flatten().any(|entry| entry.script_public_key == *script_public_key) {
+                    owner_set.transactions.entry(*id).or_insert_with(|| transaction.mtx.clone());
+                    owner.sending_txs.insert(*id);
+                }
+                if transaction.mtx.tx.outputs.iter().any(|output| output.script_public_key == *script_public_key) {
+                    owner_set.transactions.entry(*id).or_insert_with(|| transaction.mtx.clone());
+                    owner.receiving_txs.insert(*id);
+                }
+            }
+        }
+        owner_set
+    }
+
+    fn assert_matches_scan(pool: &TransactionsPool, script_public_keys: &ScriptPublicKeySet) {
+        let mut indexed = GroupedOwnerTransactions::default();
+        pool.fill_owner_set_transactions(script_public_keys, &mut indexed);
+        let scanned = scan_owner_set_transactions(pool, script_public_keys);
+        assert_eq!(
+            indexed.transactions.keys().copied().collect::<TransactionIdSet>(),
+            scanned.transactions.keys().copied().collect::<TransactionIdSet>()
+        );
+        assert_eq!(indexed.owners.len(), scanned.owners.len());
+        for (script_public_key, owner) in scanned.owners.iter() {
+            let indexed_owner = indexed.owners.get(script_public_key).unwrap();
+            assert_eq!(indexed_owner.sending_txs, owner.sending_txs);
+            assert_eq!(indexed_owner.receiving_txs, owner.receiving_txs);
+        }
+    }
+
+    #[test]
+    fn test_fill_owner_set_transactions_matches_scan() {
+        let mut pool = create_pool();
+        let script_public_keys: ScriptPublicKeySet = (0..7).map(script).collect();
+        let combos: [(&[u8], &[u8]); 5] = [(&[1], &[2]), (&[1, 2], &[3]), (&[2], &[2, 4]), (&[3, 4], &[1]), (&[5], &[5])];
+        let mut transactions = vec![];
+        for (salt, (sending, receiving)) in combos.iter().enumerate() {
+            let transaction = create_pooled_transaction(salt as u64 + 1, sending, receiving);
+            add_transaction(&mut pool, transaction.clone());
+            transactions.push(transaction);
+            assert_matches_scan(&pool, &script_public_keys);
+        }
+        for transaction in transactions.iter() {
+            pool.remove_transaction(&transaction.id()).unwrap();
+            assert_matches_scan(&pool, &script_public_keys);
+        }
+        assert!(pool.owner_index.is_empty());
+    }
+
+    #[test]
+    fn test_owner_index_survives_revalidation_entry_clearing() {
+        let mut pool = create_pool();
+        let transaction = create_pooled_transaction(1, &[1, 2], &[3]);
+        add_transaction(&mut pool, transaction.clone());
+
+        // Revalidation may swap in the transaction with differing entry population and later
+        // remove it in that state; the recorded sending keys must still be fully unindexed
+        let mut cleared = transaction.clone();
+        cleared.clear_entries();
+        assert!(pool.update_revalidated_transaction(cleared));
+        pool.remove_transaction(&transaction.id()).unwrap();
+        assert!(pool.owner_index.is_empty());
     }
 }

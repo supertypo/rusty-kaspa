@@ -11,7 +11,7 @@ mod tests {
             model::frontier::selectors::TakeAllSelector,
             tx::{Orphan, Priority, RbfPolicy},
         },
-        model::{tx_insert::TransactionInsertion, tx_query::TransactionQuery},
+        model::{owner_txs::ScriptPublicKeySet, tx_insert::TransactionInsertion, tx_query::TransactionQuery},
         testutils::consensus_mock::ConsensusMock,
     };
     use itertools::Itertools;
@@ -657,6 +657,61 @@ mod tests {
             "the transaction {} shouldn't be in the mempool since at least one output was already spent",
             transaction_in_the_mempool.id()
         );
+    }
+
+    /// test_get_transactions_by_addresses verifies that the mempool answers owner queries
+    /// consistently with its content through transaction insertions and removals.
+    #[test]
+    fn test_get_transactions_by_addresses() {
+        let consensus = Arc::new(ConsensusMock::new());
+        let mining_manager = default_mining_manager();
+        let funding_transactions = create_and_add_funding_transactions(&consensus, 2);
+        let (script_public_key, _) = op_true_script();
+        let script_public_keys: ScriptPublicKeySet = once(script_public_key.clone()).collect();
+
+        let transactions = (0..2)
+            .map(|i| {
+                let transaction = create_funded_transaction(select_transactions(&funding_transactions, &[i]), vec![0], None, 1_000);
+                let result = mining_manager.validate_and_insert_transaction(
+                    consensus.as_ref(),
+                    transaction.clone(),
+                    Priority::Low,
+                    Orphan::Forbidden,
+                    RbfPolicy::Forbidden,
+                );
+                assert!(result.is_ok(), "the mempool should accept the valid transaction {}", transaction.id());
+                transaction
+            })
+            .collect_vec();
+
+        let owner_set = mining_manager.get_transactions_by_addresses(&script_public_keys, TransactionQuery::TransactionsOnly);
+        let owner = owner_set.owners.get(&script_public_key).unwrap();
+        for transaction in transactions.iter() {
+            assert!(owner.sending_txs.contains(&transaction.id()), "transaction {} should be indexed as sending", transaction.id());
+            assert!(
+                owner.receiving_txs.contains(&transaction.id()),
+                "transaction {} should be indexed as receiving",
+                transaction.id()
+            );
+            assert!(owner_set.transactions.contains_key(&transaction.id()));
+        }
+
+        // Simulate a block accepting the first transaction, which must then leave the owner query results
+        let accepted = &transactions[0];
+        let result = mining_manager.handle_new_block_transactions(consensus.as_ref(), 2, &build_block_transactions(once(accepted)));
+        assert!(result.is_ok(), "mining manager should handle new block transactions successfully but returns {result:?}");
+
+        let owner_set = mining_manager.get_transactions_by_addresses(&script_public_keys, TransactionQuery::TransactionsOnly);
+        let owner = owner_set.owners.get(&script_public_key).unwrap();
+        assert!(!owner.sending_txs.contains(&accepted.id()), "the accepted transaction {} should no longer be indexed", accepted.id());
+        assert!(
+            !owner.receiving_txs.contains(&accepted.id()),
+            "the accepted transaction {} should no longer be indexed",
+            accepted.id()
+        );
+        assert!(!owner_set.transactions.contains_key(&accepted.id()));
+        assert!(owner.sending_txs.contains(&transactions[1].id()));
+        assert!(owner.receiving_txs.contains(&transactions[1].id()));
     }
 
     /// test_orphan_transactions verifies that a transaction could be a part of a new block template only if it's not an orphan.

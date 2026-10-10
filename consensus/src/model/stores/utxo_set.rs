@@ -170,8 +170,12 @@ impl UtxoSetStore for DbUtxoSetStore {
     }
 
     fn write_many(&mut self, utxos: &[(TransactionOutpoint, UtxoEntry)]) -> Result<(), StoreError> {
-        let mut writer = DirectDbWriter::new(&self.db);
-        self.access.write_many(&mut writer, &mut utxos.iter().map(|(o, e)| ((*o).into(), Arc::new(e.clone()))))?;
+        let mut batch = WriteBatch::default();
+        self.access.write_many_without_cache(
+            BatchDbWriter::new(&mut batch),
+            &mut utxos.iter().map(|(o, e)| ((*o).into(), Arc::new(e.clone()))),
+        )?;
+        self.db.write(batch)?;
         Ok(())
     }
 }
